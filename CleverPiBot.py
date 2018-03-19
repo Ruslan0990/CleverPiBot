@@ -10,7 +10,10 @@ from emoji import emojize, UNICODE_EMOJI
 import ujson as json
 import time
 import socket
-
+import time
+import datetime
+import psutil
+import sys
 import secret_tokens
 
 # replace these tokens with your tokens
@@ -20,32 +23,36 @@ faceAPI_token  = secret_tokens.myFaceAPI_token
 # Msft cognitive Face API url replace with your local url
 faceAPI_url = 'https://westcentralus.api.cognitive.microsoft.com/face/v1.0/detect'  
 
-IamOnLinux = True
 txt_yoffset = 28 
-
-if IamOnLinux:
+start_time = time.time()
+os_name =os.name
+if(os_name == "posix"):
+    IamOnLinux  = True
     font = ImageFont.truetype("/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf", 28, encoding="unic")
     download_folder = '/media/pi/ESD-USB/' # replace this with desired photo download folder
-else:
+elif(os_name == "nt"):
+    IamOnLinux = False
     font = ImageFont.truetype("arial.ttf", 28)
     download_folder = './downloads/'      # replace this with desired photo download folder
-  
+
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',level=logging.INFO)
 logger = logging.getLogger(__name__)
 def start(bot, update):
     user = update.message.from_user
     Message = "Hi there, I'm CleverPi bot. Send me a photo of yours. ⛈🎉🐧😊 \n"
-    Message += "/start: start the bot.\n"
-    Message += "/info: information about the bot.\n"
-    Message += "/getip: returns the local network IP address\n"
+    Message += "/start: Start the bot.\n"
+    Message += "/info: Get available commands infos .\n"
+    Message += "/status: Get status info on raspberry pi.\n"
+    Message += "/getip: Get the local network IP address.\n"
     logger.info("Started chat with %s" , user.first_name)
     update.message.reply_text( Message )
 
-def info_handler(bot, update):
+def info_command(bot, update):
     user = update.message.from_user
-    Message =  "/start: start the bot.\n"
-    Message += "/info: information about the bot.\n"
-    Message += "/getip: returns the local network IP address\n"
+    Message = "/start: Start the bot.\n"
+    Message += "/info: Get available commands infos .\n"
+    Message += "/status: Get status info on raspberry pi.\n"
+    Message += "/getip: Get the local network IP address.\n"
     logger.info("Info requested by %s" , user.first_name)
     update.message.reply_text( Message )
 
@@ -124,6 +131,43 @@ def getIP_command(bot, update):
         bot.send_message(chat_id=update.message.chat_id, text="No permission." )
         logger.info("Unauthorized user requested IP adress %s",  user.first_name   )
 
+def measure_temp():
+        temp = os.popen("vcgencmd measure_temp").readline()
+        return (temp.replace("temp=",""))
+        
+def status_command(bot, update):
+    user = update.message.from_user
+    if (admin_telegramID == user.id ):
+        tdelta = time.strftime('%H:%M:%S', time.gmtime(time.time() - start_time))
+        msg = "Elapsed time since bot stared: " + str(tdelta) + " \n" 
+        boottime = datetime.datetime.fromtimestamp(psutil.boot_time()).strftime("%Y-%m-%d %H:%M:%S")
+        msg += "Bootime: " + boottime + "\n"
+        cpu_usage = psutil.cpu_percent(interval=1, percpu=True)
+        msg += "CPU usage: " + str(cpu_usage)  + "\n"
+        if IamOnLinux:
+            temp = measure_temp()
+            msg += "CPU temperature: "  + str(temp) 
+        ram = psutil.virtual_memory()
+        ram_total =round ( ram.total / 2**20 , 1)      # MiB.
+        ram_available = round (ram.available  / 2**20, 1)
+        ram_percent_free = 100 - ram.percent
+        msg += "Memory: " + str(ram_available) + " MB free (" + str(ram_percent_free)+ "%) of " +  str(ram_total) + " MB \n"
+        pid = os.getpid()
+        py = psutil.Process(pid)
+        memoryUse =  round ( py.memory_info()[0]/2.**20 , 1)  # memory use of this script
+        msg += "Memory this script currently uses: " + str(memoryUse) + " MB \n"
+        # main_path = "C:"
+        disk = psutil.disk_usage("/")
+        disk_total = round ( disk.total / 2**30 , 1) 
+        disk_free = round (disk.free / 2**30, 1)
+        disk_percent_free = 100 - disk.percent
+        msg += "Disk space in main dir: " + str(disk_free) + " GB free (" + str(disk_percent_free)+ "%) of " +  str(disk_total) + " GB \n"
+        bot.send_message(chat_id=update.message.chat_id, text=msg )
+        logger.info("Status requested by %s",  user.first_name   )
+    else:
+        bot.send_message(chat_id=update.message.chat_id, text="No permission." )
+        logger.info("Unauthorized user requested status %s",  user.first_name   )
+
 def is_emoji(s):
     return s in UNICODE_EMOJI
 
@@ -165,8 +209,9 @@ def main():
     updater = Updater(telegram_token)
     dp = updater.dispatcher # Get the dispatcher to register handlers
     dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("info", info_handler))
+    dp.add_handler(CommandHandler("info", info_command))
     dp.add_handler(CommandHandler("getip", getIP_command))
+    dp.add_handler(CommandHandler("status", status_command))
     dp.add_handler(MessageHandler(Filters.text, text_handler))
     dp.add_handler(MessageHandler(Filters.photo, photo_handler))
     dp.add_handler(MessageHandler(Filters.command, unknown))
