@@ -13,7 +13,7 @@ import socket
 import time
 import datetime
 import psutil
-import sys
+
 import secret_tokens
 
 # replace these tokens with your tokens
@@ -25,6 +25,8 @@ faceAPI_url = 'https://westcentralus.api.cognitive.microsoft.com/face/v1.0/detec
 
 txt_yoffset = 28 
 start_time = time.time()
+num_received_pics = 0
+unique_user_set = set([])
 os_name =os.name
 if(os_name == "posix"):
     IamOnLinux  = True
@@ -39,6 +41,8 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 def start(bot, update):
     user = update.message.from_user
+    global unique_user_set
+    unique_user_set.add(user.id)    
     Message = "Hi there, I'm CleverPi bot. Send me a photo of yours. ⛈🎉🐧😊 \n"
     Message += "/start: Start the bot.\n"
     Message += "/info: Get available commands infos .\n"
@@ -56,12 +60,13 @@ def info_command(bot, update):
     logger.info("Info requested by %s" , user.first_name)
     update.message.reply_text( Message )
 
-def annotate_image(img_data ,headers,params):
+def annotate_image(img_data ,headers,params, update):
     try:
         response=requests.post(faceAPI_url, data=img_data,headers=headers,params=params)
         print ('Face API Response:')
         faces = response.json()
         print (faces)
+        update.message.reply_text('Found ' +  str( len(faces)) + ' faces in your photo.')
         image  = Image.open(BytesIO(img_data))
         image = ImageEnhance.Brightness(image).enhance(1.05)
         image = ImageEnhance.Contrast(image).enhance(1.1)
@@ -92,6 +97,8 @@ def annotate_image(img_data ,headers,params):
         return image 
 
 def photo_handler(bot, update):
+    global num_received_pics
+    num_received_pics = num_received_pics + 1
     user = update.message.from_user
     photo_id  = update.message.photo[-1].file_id
     photo_file = bot.get_file(photo_id)
@@ -104,15 +111,14 @@ def photo_handler(bot, update):
         FaceAPI_headers = { 'Ocp-Apim-Subscription-Key': faceAPI_token , 'Content-Type': 'application/octet-stream' }
         FaceAPI_params = {'returnFaceId': 'true', 'returnFaceLandmarks': 'false','returnFaceAttributes': 'age,gender,glasses,emotion,facialHair'}
     #    'returnFaceAttributes': 'age,gender,smile,facialHair,glasses,emotion,hair,makeup,occlusion,accessories,blur,exposure,noise'    
-        img = annotate_image(img_data ,FaceAPI_headers,FaceAPI_params)
+        img = annotate_image(img_data, FaceAPI_headers, FaceAPI_params, update)
         img_edited_path = img_path + '_edit.jpg' 
         img.save( img_edited_path, "JPEG")
-
+        
     with open(img_edited_path, 'rb') as f:
         bot.send_photo(chat_id=update.message.chat_id, photo=f, timeout=50)
     os.remove(img_path  + '.jpg' )   # remove unmodified photo
     # os.remove(img_edited_path)     # remove modified photo
-    update.message.reply_text('Gorgeous photo!')
 
 def error(bot, update, error):
     logger.warning('Update "%s" caused error "%s"', update, error)
@@ -162,6 +168,8 @@ def status_command(bot, update):
         disk_free = round (disk.free / 2**30, 1)
         disk_percent_free = 100 - disk.percent
         msg += "Disk space in main dir: " + str(disk_free) + " GB free (" + str(disk_percent_free)+ "%) of " +  str(disk_total) + " GB \n"
+        global unique_user_set
+        msg += "Received " +  str(num_received_pics) +  " photos from " + str(len(unique_user_set)) + " unique users so far. \n"
         bot.send_message(chat_id=update.message.chat_id, text=msg )
         logger.info("Status requested by %s",  user.first_name   )
     else:
