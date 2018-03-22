@@ -13,7 +13,6 @@ import socket
 import time
 import datetime
 import psutil
-
 import secret_tokens
 
 # replace these tokens with your tokens
@@ -22,18 +21,24 @@ telegram_token = secret_tokens.myTelegramToken
 faceAPI_token  = secret_tokens.myFaceAPI_token
 # Msft cognitive Face API url replace with your local url
 faceAPI_url = 'https://westcentralus.api.cognitive.microsoft.com/face/v1.0/detect'  
-
 txt_yoffset = 28 
 start_time = time.time()
-num_received_pics = 0
+received_pics_counter = 0
+raspi_pic_counter = 0 
 unique_user_set = set([])
 os_name =os.name
 if(os_name == "posix"):
-    IamOnLinux  = True
+    import picamera
+    from fractions import Fraction
+    camera = picamera.PiCamera()
+    camera.resolution = (1296,972)
+    IamOnRaspi  = True
+    night_mode_on = False
     font = ImageFont.truetype("/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf", 28, encoding="unic")
-    download_folder = '/media/pi/ESD-USB/' # replace this with desired photo download folder
+    #download_folder = '/media/pi/ESD-USB/' # replace this with desired photo download folder
+    download_folder = './downloads/' 
 elif(os_name == "nt"):
-    IamOnLinux = False
+    IamOnRaspi = False
     font = ImageFont.truetype("arial.ttf", 28)
     download_folder = './downloads/'      # replace this with desired photo download folder
 
@@ -45,7 +50,10 @@ def start(bot, update):
     unique_user_set.add(user.id)    
     Message = "Hi there, I'm CleverPi bot. Send me a photo of yours. ⛈🎉🐧😊 \n"
     Message += "/start: Start the bot.\n"
-    Message += "/info: Get available commands infos .\n"
+    Message += "/info: Get available commands.\n"
+    if IamOnRaspi:
+        Message += "/cheese: Capture a photo with the raspi camera.\n"
+        Message += "/nightmode: Toggle nightmode settings on raspi camera.\n"
     Message += "/status: Get status info on raspberry pi.\n"
     Message += "/getip: Get the local network IP address.\n"
     logger.info("Started chat with %s" , user.first_name)
@@ -54,7 +62,10 @@ def start(bot, update):
 def info_command(bot, update):
     user = update.message.from_user
     Message = "/start: Start the bot.\n"
-    Message += "/info: Get available commands infos .\n"
+    Message += "/info: Get available commands.\n"
+    if IamOnRaspi:
+        Message += "/cheese: Capture a photo with the raspi camera.\n"
+        Message += "/nightmode: Toggle nightmode settings on raspi camera.\n"
     Message += "/status: Get status info on raspberry pi.\n"
     Message += "/getip: Get the local network IP address.\n"
     logger.info("Info requested by %s" , user.first_name)
@@ -97,8 +108,8 @@ def annotate_image(img_data ,headers,params, update):
         return image 
 
 def photo_handler(bot, update):
-    global num_received_pics
-    num_received_pics = num_received_pics + 1
+    global received_pics_counter
+    received_pics_counter = received_pics_counter + 1
     user = update.message.from_user
     photo_id  = update.message.photo[-1].file_id
     photo_file = bot.get_file(photo_id)
@@ -114,9 +125,8 @@ def photo_handler(bot, update):
         img = annotate_image(img_data, FaceAPI_headers, FaceAPI_params, update)
         img_edited_path = img_path + '_edit.jpg' 
         img.save( img_edited_path, "JPEG")
-        
     with open(img_edited_path, 'rb') as f:
-        bot.send_photo(chat_id=update.message.chat_id, photo=f, timeout=50)
+        bot.send_photo(chat_id=update.message.chat_id, photo=f, timeout=150)
     os.remove(img_path  + '.jpg' )   # remove unmodified photo
     # os.remove(img_edited_path)     # remove modified photo
 
@@ -137,6 +147,42 @@ def getIP_command(bot, update):
         bot.send_message(chat_id=update.message.chat_id, text="No permission." )
         logger.info("Unauthorized user requested IP adress %s",  user.first_name   )
 
+def nightmode_command(bot, update):
+    global camera
+    global night_mode_on
+    user = update.message.from_user
+    if not night_mode_on:
+        bot.send_message(chat_id=update.message.chat_id, text="Turning on night mode camera settings." )
+        camera.resolution = (640, 480)
+        camera.drc_strength = "medium"
+        camera.framerate = Fraction(1, 6)
+        camera.shutter_speed = 4500000
+        camera.exposure_mode = 'off'
+        camera.iso = 800
+        time.sleep(2)
+        logger.info("%s turned on night mode for raspi camera.",  user.first_name )
+    else:
+        camera.resolution = (1296,972)
+        camera.drc_strength = 'off'
+        camera.framerate = 30
+        camera.shutter_speed = 0
+        camera.exposure_mode = 'auto'
+        bot.send_message(chat_id=update.message.chat_id, text="Turning off night mode camera settings." )
+        logger.info("%s turned off night mode for raspi camera.",  user.first_name )
+    night_mode_on = not night_mode_on
+
+def cheese_command(bot, update):
+    global camera
+    global raspi_pic_counter   
+    raspi_pic_counter = raspi_pic_counter + 1
+    user = update.message.from_user
+    bot.send_message(chat_id=update.message.chat_id, text="I'm taking a picture." )
+    logger.info("%s requested a raspi camera photo.",  user.first_name )
+    pic_filename =  download_folder  + 'picam_' + str(raspi_pic_counter) + '.jpg'
+    camera.capture( pic_filename )
+    with open(pic_filename, 'rb') as f:
+        bot.send_photo(chat_id=update.message.chat_id, photo=f, timeout=150)
+
 def measure_temp():
         temp = os.popen("vcgencmd measure_temp").readline()
         return (temp.replace("temp=",""))
@@ -150,7 +196,7 @@ def status_command(bot, update):
         msg += "Bootime: " + boottime + "\n"
         cpu_usage = psutil.cpu_percent(interval=1, percpu=True)
         msg += "CPU usage: " + str(cpu_usage)  + "\n"
-        if IamOnLinux:
+        if IamOnRaspi:
             temp = measure_temp()
             msg += "CPU temperature: "  + str(temp) 
         ram = psutil.virtual_memory()
@@ -169,7 +215,8 @@ def status_command(bot, update):
         disk_percent_free = 100 - disk.percent
         msg += "Disk space in main dir: " + str(disk_free) + " GB free (" + str(disk_percent_free)+ "%) of " +  str(disk_total) + " GB \n"
         global unique_user_set
-        msg += "Received " +  str(num_received_pics) +  " photos from " + str(len(unique_user_set)) + " unique users so far. \n"
+        global received_pics_counter
+        msg += "Received " +  str(received_pics_counter) +  " photos from " + str(len(unique_user_set)) + " unique users so far. \n"
         bot.send_message(chat_id=update.message.chat_id, text=msg )
         logger.info("Status requested by %s",  user.first_name   )
     else:
@@ -220,6 +267,9 @@ def main():
     dp.add_handler(CommandHandler("info", info_command))
     dp.add_handler(CommandHandler("getip", getIP_command))
     dp.add_handler(CommandHandler("status", status_command))
+    if IamOnRaspi:
+        dp.add_handler(CommandHandler("cheese", cheese_command))
+        dp.add_handler(CommandHandler("nightmode", nightmode_command))
     dp.add_handler(MessageHandler(Filters.text, text_handler))
     dp.add_handler(MessageHandler(Filters.photo, photo_handler))
     dp.add_handler(MessageHandler(Filters.command, unknown))
