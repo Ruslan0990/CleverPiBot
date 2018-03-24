@@ -30,8 +30,8 @@ raspi_pic_counter = 0
 unique_user_set = set([])
 os_name =os.name
 yes_no_keyboard = [['Yes', 'No' ]]
-almost_shutdown = False
-almost_reboot = False
+NORMAL_MODE , SHUTDOWN_MODE, REBOOT_MODE= range(3)
+current_mode = NORMAL_MODE
 
 if(os_name == "posix"):
     import picamera
@@ -210,7 +210,7 @@ def status_command(bot, update):
     user = update.message.from_user
     if (admin_telegramID == user.id ):
         tdelta = time.strftime('%H:%M:%S', time.gmtime(time.time() - start_time))
-        msg = "Elapsed time since bot stared: " + str(tdelta) + " \n" 
+        msg = "Elapsed time: " + str(tdelta) + "\n" 
         boottime = datetime.fromtimestamp(psutil.boot_time()).strftime("%Y-%m-%d %H:%M:%S")
         msg += "Bootime: " + boottime + "\n"
         cpu_usage = psutil.cpu_percent(interval=1, percpu=True)
@@ -222,7 +222,7 @@ def status_command(bot, update):
         ram_total =round ( ram.total / 2**20 , 1)      # MiB.
         ram_available = round (ram.available  / 2**20, 1)
         ram_percent_free = 100 - ram.percent
-        msg += "Memory: " + str(ram_available) + " MB free (" + str(ram_percent_free)+ "%) of " +  str(ram_total) + " MB \n"
+        msg += "Memory: " + str(ram_available) + " MB free (" + str(ram_percent_free)+ "%) of " +  str(ram_total) + " MB\n"
         pid = os.getpid()
         py = psutil.Process(pid)
         memoryUse =  round ( py.memory_info()[0]/2.**20 , 1)  # memory use of this script
@@ -232,11 +232,12 @@ def status_command(bot, update):
         disk_total = round ( disk.total / 2**30 , 1) 
         disk_free = round (disk.free / 2**30, 1)
         disk_percent_free = 100 - disk.percent
-        msg += "Disk space in main dir: " + str(disk_free) + " GB free (" + str(disk_percent_free)+ "%) of " +  str(disk_total) + " GB \n"
+        msg += "Disk space in main dir: " + str(disk_free) + " GB free (" + str(disk_percent_free)+ "%) of " +  str(disk_total) + " GB\n"
         global unique_user_set
         global received_pics_counter
         global raspi_pic_counter
-        msg += "Received " +  str(received_pics_counter) + " and took "  + str(raspi_pic_counter) +  " photos from " + str(len(unique_user_set)) + " unique users so far. \n"
+        msg += "Received " +  str(received_pics_counter) + " and took "  + str(raspi_pic_counter) +  " photos\n"
+        msg += "Number of users: " + str(len(unique_user_set)) + "\n"
         bot.send_message(chat_id=update.message.chat_id, text=msg )
         logger.info("Status requested by %s",  user.first_name   )
     else:
@@ -250,21 +251,20 @@ def text_handler(bot, update):
         message = update.message.text
         user = update.message.from_user
         logger.info("New message by %s : %s", user.first_name, message )
-        global almost_shutdown
-        if almost_shutdown :
+        global current_mode
+        if current_mode == SHUTDOWN_MODE :
             if message == "Yes":
                 bot.send_message(chat_id=update.message.chat_id, text= "Shutting down..." )
                 call("sudo halt", shell=True)
             else:
-                almost_shutdown = False
+                current_mode = NORMAL_MODE
                 bot.send_message(chat_id=update.message.chat_id, text= "Ok then not. 👍" )
-        global almost_reboot
-        if almost_reboot :
+        if current_mode == REBOOT_MODE :
             if message == "Yes":
                 bot.send_message(chat_id=update.message.chat_id, text= "Rebooting now..." )
                 call("sudo reboot", shell=True)
             else:
-                almost_reboot = False
+                current_mode = NORMAL_MODE
                 bot.send_message(chat_id=update.message.chat_id, text= "Ok then not. 👍" )
 
         msg_stripped  = message.lower() 
@@ -295,8 +295,8 @@ def halt_command(bot, update):
     logger.info("Shutdown requested by %s",  user.first_name   )
     if (admin_telegramID == user.id ):
         markup=ReplyKeyboardMarkup(yes_no_keyboard, one_time_keyboard=True)
-        global almost_shutdown
-        almost_shutdown = True
+        global current_mode
+        current_mode = SHUTDOWN_MODE
         update.message.reply_text(  "Are you sure?", reply_markup=markup)
     else:
         bot.send_message(chat_id=update.message.chat_id, text="No permission." )
@@ -306,8 +306,8 @@ def reboot_command(bot, update):
     logger.info("Reboot requested by %s",  user.first_name   )
     if (admin_telegramID == user.id ):
         markup=ReplyKeyboardMarkup(yes_no_keyboard, one_time_keyboard=True)
-        global almost_shutdown
-        almost_shutdown = True
+        global current_mode
+        current_mode = REBOOT_MODE
         update.message.reply_text(  "Are you sure?", reply_markup=markup)
     else:
         bot.send_message(chat_id=update.message.chat_id, text="No permission." )
