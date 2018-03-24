@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
+from telegram import ReplyKeyboardMarkup
 import logging
 import os
 import requests
@@ -14,6 +15,7 @@ import time
 import datetime
 import psutil
 import secret_tokens
+from datetime import datetime
 
 # replace these tokens with your tokens
 admin_telegramID  = secret_tokens.myTelegramID
@@ -27,9 +29,14 @@ received_pics_counter = 0
 raspi_pic_counter = 0 
 unique_user_set = set([])
 os_name =os.name
+yes_no_keyboard = [['Yes', 'No' ]]
+almost_shutdown = False
+almost_reboot = False
+
 if(os_name == "posix"):
     import picamera
     from fractions import Fraction
+    from subprocess import call
     camera = picamera.PiCamera()
     camera.resolution = (1296,972)
     IamOnRaspi  = True
@@ -41,6 +48,8 @@ elif(os_name == "nt"):
     IamOnRaspi = False
     font = ImageFont.truetype("arial.ttf", 28)
     download_folder = './downloads/'      # replace this with desired photo download folder
+
+current_folder = download_folder + '{:%Y_%m_%d_%H%M}'.format(datetime.now()) + '/'
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -54,8 +63,11 @@ def start(bot, update):
     if IamOnRaspi:
         Message += "/cheese: Capture a photo with the raspi camera.\n"
         Message += "/nightmode: Toggle nightmode settings on raspi camera.\n"
-    Message += "/status: Get status info on raspberry pi.\n"
-    Message += "/getip: Get the local network IP address.\n"
+        if (admin_telegramID == user.id ):
+            Message += "/status: Get status info on raspberry pi.\n"
+            Message += "/getip: Get the local network IP address.\n"
+            Message += "/halt: Shutdown the Pi.\n"
+            Message += "/reboot: Reboot the Pi.\n"
     logger.info("Started chat with %s" , user.first_name)
     update.message.reply_text( Message )
 
@@ -66,8 +78,11 @@ def info_command(bot, update):
     if IamOnRaspi:
         Message += "/cheese: Capture a photo with the raspi camera.\n"
         Message += "/nightmode: Toggle nightmode settings on raspi camera.\n"
-    Message += "/status: Get status info on raspberry pi.\n"
-    Message += "/getip: Get the local network IP address.\n"
+        if (admin_telegramID == user.id ):
+            Message += "/status: Get status info on raspberry pi.\n"
+            Message += "/getip: Get the local network IP address.\n"
+            Message += "/halt: Shutdown the Pi.\n"
+            Message += "/reboot: Reboot the Pi.\n"
     logger.info("Info requested by %s" , user.first_name)
     update.message.reply_text( Message )
 
@@ -111,11 +126,13 @@ def photo_handler(bot, update):
     global received_pics_counter
     received_pics_counter = received_pics_counter + 1
     user = update.message.from_user
+    global unique_user_set
+    unique_user_set.add(user.id)  
     photo_id  = update.message.photo[-1].file_id
     photo_file = bot.get_file(photo_id)
     update.message.reply_text('Let me take a look at your photo...')
     logger.info("Received photo from %s: %s", user.first_name,  str( photo_id) )
-    img_path =  download_folder + str( photo_id) 
+    img_path =  current_folder + str( photo_id) 
     photo_file.download( img_path   + ".jpg" )
     with open(  img_path   + ".jpg" , 'rb' ) as f:
         img_data = f.read()
@@ -176,9 +193,11 @@ def cheese_command(bot, update):
     global raspi_pic_counter   
     raspi_pic_counter = raspi_pic_counter + 1
     user = update.message.from_user
+    global unique_user_set
+    unique_user_set.add(user.id)  
     bot.send_message(chat_id=update.message.chat_id, text="I'm taking a picture." )
     logger.info("%s requested a raspi camera photo.",  user.first_name )
-    pic_filename =  download_folder  + 'picam_' + str(raspi_pic_counter) + '.jpg'
+    pic_filename =  current_folder  + 'picam_' + str(raspi_pic_counter) + '.jpg'
     camera.capture( pic_filename )
     with open(pic_filename, 'rb') as f:
         bot.send_photo(chat_id=update.message.chat_id, photo=f, timeout=150)
@@ -192,7 +211,7 @@ def status_command(bot, update):
     if (admin_telegramID == user.id ):
         tdelta = time.strftime('%H:%M:%S', time.gmtime(time.time() - start_time))
         msg = "Elapsed time since bot stared: " + str(tdelta) + " \n" 
-        boottime = datetime.datetime.fromtimestamp(psutil.boot_time()).strftime("%Y-%m-%d %H:%M:%S")
+        boottime = datetime.fromtimestamp(psutil.boot_time()).strftime("%Y-%m-%d %H:%M:%S")
         msg += "Bootime: " + boottime + "\n"
         cpu_usage = psutil.cpu_percent(interval=1, percpu=True)
         msg += "CPU usage: " + str(cpu_usage)  + "\n"
@@ -216,7 +235,8 @@ def status_command(bot, update):
         msg += "Disk space in main dir: " + str(disk_free) + " GB free (" + str(disk_percent_free)+ "%) of " +  str(disk_total) + " GB \n"
         global unique_user_set
         global received_pics_counter
-        msg += "Received " +  str(received_pics_counter) +  " photos from " + str(len(unique_user_set)) + " unique users so far. \n"
+        global raspi_pic_counter
+        msg += "Received " +  str(received_pics_counter) + " and took "  + str(raspi_pic_counter) +  " photos from " + str(len(unique_user_set)) + " unique users so far. \n"
         bot.send_message(chat_id=update.message.chat_id, text=msg )
         logger.info("Status requested by %s",  user.first_name   )
     else:
@@ -230,10 +250,26 @@ def text_handler(bot, update):
         message = update.message.text
         user = update.message.from_user
         logger.info("New message by %s : %s", user.first_name, message )
+        global almost_shutdown
+        if almost_shutdown :
+            if message == "Yes":
+                bot.send_message(chat_id=update.message.chat_id, text= "Shutting down..." )
+                call("sudo halt", shell=True)
+            else:
+                almost_shutdown = False
+                bot.send_message(chat_id=update.message.chat_id, text= "Ok then not. 👍" )
+        global almost_reboot
+        if almost_reboot :
+            if message == "Yes":
+                bot.send_message(chat_id=update.message.chat_id, text= "Rebooting now..." )
+                call("sudo reboot", shell=True)
+            else:
+                almost_reboot = False
+                bot.send_message(chat_id=update.message.chat_id, text= "Ok then not. 👍" )
+
         msg_stripped  = message.lower() 
         msg_stripped = re.sub(r'([^\s\w]|_)+', '', msg_stripped)  # remove all special characters
         msg_stripped = re.sub(r'([^\D]|_)+', '', msg_stripped)    # remove all digits characters
-
         # check if message is a greeting
         greetings_list = [ 'hi'  ,'hey', 'hello', 'greetings' , 'hoi',  "sup" ]
         if any(set(msg_stripped.split()) & set(greetings_list)):
@@ -254,6 +290,28 @@ def text_handler(bot, update):
             except:
                 logger.warning('Emoji update "%s" by "%s" caused error ' , message ,  user.first_name )
 
+def halt_command(bot, update):
+    user = update.message.from_user
+    logger.info("Shutdown requested by %s",  user.first_name   )
+    if (admin_telegramID == user.id ):
+        markup=ReplyKeyboardMarkup(yes_no_keyboard, one_time_keyboard=True)
+        global almost_shutdown
+        almost_shutdown = True
+        update.message.reply_text(  "Are you sure?", reply_markup=markup)
+    else:
+        bot.send_message(chat_id=update.message.chat_id, text="No permission." )
+
+def reboot_command(bot, update):
+    user = update.message.from_user
+    logger.info("Reboot requested by %s",  user.first_name   )
+    if (admin_telegramID == user.id ):
+        markup=ReplyKeyboardMarkup(yes_no_keyboard, one_time_keyboard=True)
+        global almost_shutdown
+        almost_shutdown = True
+        update.message.reply_text(  "Are you sure?", reply_markup=markup)
+    else:
+        bot.send_message(chat_id=update.message.chat_id, text="No permission." )
+
 def unknown(bot, update):
     user = update.message.from_user
     command = update.message.text
@@ -261,6 +319,7 @@ def unknown(bot, update):
     logger.info("Unknown command by %s : %s",  user.first_name , command  )
 
 def main():
+    os.makedirs(current_folder)
     updater = Updater(telegram_token)
     dp = updater.dispatcher # Get the dispatcher to register handlers
     dp.add_handler(CommandHandler("start", start))
@@ -268,6 +327,8 @@ def main():
     dp.add_handler(CommandHandler("getip", getIP_command))
     dp.add_handler(CommandHandler("status", status_command))
     if IamOnRaspi:
+        dp.add_handler(CommandHandler("halt", halt_command))
+        dp.add_handler(CommandHandler("reboot", reboot_command))
         dp.add_handler(CommandHandler("cheese", cheese_command))
         dp.add_handler(CommandHandler("nightmode", nightmode_command))
     dp.add_handler(MessageHandler(Filters.text, text_handler))
