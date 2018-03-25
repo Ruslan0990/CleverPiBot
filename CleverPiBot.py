@@ -14,8 +14,29 @@ import socket
 import time
 import datetime
 import psutil
+import threading
 import secret_tokens
 from datetime import datetime
+
+
+class timelaps_class():
+    def __init__(self,pic_filename,camera ,logger, sec_interval):
+        self.timelaps_thread = threading.Thread(target=self.timelaps_task, args=(camera,pic_filename, logger,sec_interval) )
+        self.stop_event = threading.Event()
+        self.timelaps_thread.daemon = True
+        self.timelaps_thread.start()
+    def timelaps_task(self, camera,pic_filename,logger,sec_interval):
+        for filename in camera.capture_continuous( pic_filename + '{counter:03d}.jpg'):
+            logger.info('Autocaptured %s' % filename)
+            if self.stop_event.is_set():
+                logger.info('Timelapse mode stopped')
+                break
+            time.sleep(sec_interval)
+    def close(self):
+        self.stop_event.set()
+        self.timelaps_thread.join()
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
 
 # replace these tokens with your tokens
 admin_telegramID  = secret_tokens.myTelegramID
@@ -32,6 +53,7 @@ os_name =os.name
 yes_no_keyboard = [['Yes', 'No' ]]
 NORMAL_MODE , SHUTDOWN_MODE, REBOOT_MODE= range(3)
 current_mode = NORMAL_MODE
+timelapse_mode = False
 
 if(os_name == "posix"):
     import picamera
@@ -57,12 +79,12 @@ def start(bot, update):
     user = update.message.from_user
     global unique_user_set
     unique_user_set.add(user.id)    
-    Message = "Hi there, I'm CleverPi bot. Send me a photo of yours. ⛈🎉🐧😊 \n"
-    Message += "/start: Start the bot.\n"
+    Message = "Hi there, I'm CleverPi bot. Send me a photo of yours. 🎉🐧😊 \n"
     Message += "/info: Get available commands.\n"
     if IamOnRaspi:
         Message += "/cheese: Capture a photo with the raspi camera.\n"
         Message += "/nightmode: Toggle nightmode settings on raspi camera.\n"
+        Message += "/timelapse x: Toggle timelapse mode with x seconds interval.\n" 
         if (admin_telegramID == user.id ):
             Message += "/status: Get status info on raspberry pi.\n"
             Message += "/getip: Get the local network IP address.\n"
@@ -73,11 +95,11 @@ def start(bot, update):
 
 def info_command(bot, update):
     user = update.message.from_user
-    Message = "/start: Start the bot.\n"
-    Message += "/info: Get available commands.\n"
+    Message = "/info: Get available commands.\n"
     if IamOnRaspi:
         Message += "/cheese: Capture a photo with the raspi camera.\n"
         Message += "/nightmode: Toggle nightmode settings on raspi camera.\n"
+        Message += "/timelapse x: Toggle timelapse mode with x seconds interval.\n" 
         if (admin_telegramID == user.id ):
             Message += "/status: Get status info on raspberry pi.\n"
             Message += "/getip: Get the local network IP address.\n"
@@ -165,42 +187,76 @@ def getIP_command(bot, update):
         logger.info("Unauthorized user requested IP adress %s",  user.first_name   )
 
 def nightmode_command(bot, update):
-    global camera
-    global night_mode_on
     user = update.message.from_user
-    if not night_mode_on:
-        bot.send_message(chat_id=update.message.chat_id, text="Turning on night mode camera settings." )
-        camera.resolution = (640, 480)
-        camera.drc_strength = "medium"
-        camera.framerate = Fraction(1, 6)
-        camera.shutter_speed = 4500000
-        camera.exposure_mode = 'off'
-        camera.iso = 800
-        time.sleep(2)
-        logger.info("%s turned on night mode for raspi camera.",  user.first_name )
+    if not timelapse_mode:
+        global camera
+        global night_mode_on
+        if not night_mode_on:
+            bot.send_message(chat_id=update.message.chat_id, text="Turning on night mode camera settings." )
+            camera.resolution = (640, 480)
+            camera.drc_strength = "medium"
+            camera.framerate = Fraction(1, 6)
+            camera.shutter_speed = 4500000
+            camera.exposure_mode = 'off'
+            camera.iso = 800
+            time.sleep(2)
+            logger.info("%s turned on night mode for raspi camera.",  user.first_name )
+        else:
+            camera.resolution = (1296,972)
+            camera.drc_strength = 'off'
+            camera.framerate = 30
+            camera.shutter_speed = 0
+            camera.exposure_mode = 'auto'
+            bot.send_message(chat_id=update.message.chat_id, text="Turning off night mode camera settings." )
+            logger.info("%s turned off night mode for raspi camera.",  user.first_name )
+        night_mode_on = not night_mode_on
     else:
-        camera.resolution = (1296,972)
-        camera.drc_strength = 'off'
-        camera.framerate = 30
-        camera.shutter_speed = 0
-        camera.exposure_mode = 'auto'
-        bot.send_message(chat_id=update.message.chat_id, text="Turning off night mode camera settings." )
-        logger.info("%s turned off night mode for raspi camera.",  user.first_name )
-    night_mode_on = not night_mode_on
+        bot.send_message(chat_id=update.message.chat_id, text="Error: First turn off timelapse mode." )
+        logger.info("%s tried to capture photo in timelapse mode.",  user.first_name )
 
 def cheese_command(bot, update):
-    global camera
-    global raspi_pic_counter   
-    raspi_pic_counter = raspi_pic_counter + 1
     user = update.message.from_user
-    global unique_user_set
-    unique_user_set.add(user.id)  
-    bot.send_message(chat_id=update.message.chat_id, text="I'm taking a picture." )
-    logger.info("%s requested a raspi camera photo.",  user.first_name )
-    pic_filename =  current_folder  + 'picam_' + str(raspi_pic_counter) + '.jpg'
-    camera.capture( pic_filename )
-    with open(pic_filename, 'rb') as f:
-        bot.send_photo(chat_id=update.message.chat_id, photo=f, timeout=150)
+    if not timelapse_mode:
+        global camera
+        global raspi_pic_counter   
+        raspi_pic_counter = raspi_pic_counter + 1
+        global unique_user_set
+        unique_user_set.add(user.id)  
+        bot.send_message(chat_id=update.message.chat_id, text="I'm taking a picture." )
+        logger.info("%s requested a camera photo.",  user.first_name )
+        pic_filename =  current_folder  + 'picam_' + str(raspi_pic_counter) + '.jpg'
+        camera.capture( pic_filename )
+        with open(pic_filename, 'rb') as f:
+            bot.send_photo(chat_id=update.message.chat_id, photo=f, timeout=150)
+    else:
+        bot.send_message(chat_id=update.message.chat_id, text="Error: First turn off timelapse mode." )
+        logger.info("%s tried to capture photo in timelapse mode.",  user.first_name )
+
+def timelapse_command(bot, update, args):
+    input_args = " ".join(args)
+    try:
+        time_interval = int(input_args)
+        if time_interval < 10:
+            time_interval =  10
+            logger.info("User input for time_interval to low using 10s instead.")
+    except:
+        time_interval =  60
+        logger.info("Wrong user input for time_interval using 60s instead.")
+    global timelapse_mode
+    global camera
+    global my_timelaps
+    pic_filename =  current_folder  + 'timelapse_'
+    if not timelapse_mode: 
+        timelapse_mode = True
+        global camera
+        my_timelaps = timelaps_class(pic_filename,camera ,logger,time_interval)
+        txt = "Turning on timelapse with " + str(time_interval) + "s interval."
+        bot.send_message(chat_id=update.message.chat_id, text=txt )
+        logger.info(txt)
+    else:
+        my_timelaps.close()
+        bot.send_message(chat_id=update.message.chat_id, text="Turning off timelapse." )
+        timelapse_mode = False
 
 def measure_temp():
         temp = os.popen("vcgencmd measure_temp").readline()
@@ -330,6 +386,7 @@ def main():
         dp.add_handler(CommandHandler("halt", halt_command))
         dp.add_handler(CommandHandler("reboot", reboot_command))
         dp.add_handler(CommandHandler("cheese", cheese_command))
+        dp.add_handler(CommandHandler("timelapse", timelapse_command, pass_args=True))
         dp.add_handler(CommandHandler("nightmode", nightmode_command))
     dp.add_handler(MessageHandler(Filters.text, text_handler))
     dp.add_handler(MessageHandler(Filters.photo, photo_handler))
