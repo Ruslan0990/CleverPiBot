@@ -11,30 +11,34 @@ from emoji import emojize, UNICODE_EMOJI
 import ujson as json
 import time
 import socket
-import time
-import datetime
 import psutil
 import threading
 import secret_tokens
 from datetime import datetime
-
+import random
 
 class timelaps_class():
-    def __init__(self,pic_filename,camera ,logger, sec_interval):
-        self.timelaps_thread = threading.Thread(target=self.timelaps_task, args=(camera,pic_filename, logger,sec_interval) )
+    def __init__(self,pic_filename,logger, sec_interval):
+
+        self.timelaps_thread = threading.Thread(target=self.timelaps_task, args=(pic_filename, logger,sec_interval) )
         self.stop_event = threading.Event()
         self.timelaps_thread.daemon = True
         self.timelaps_thread.start()
-    def timelaps_task(self, camera,pic_filename,logger,sec_interval):
-        for filename in camera.capture_continuous( pic_filename + '{counter:03d}.jpg'):
-            logger.info('Autocaptured %s' % filename)
-            if self.stop_event.is_set():
-                logger.info('Timelapse mode stopped')
-                break
-            time.sleep(sec_interval)
+
+    def timelaps_task(self, pic_filename,logger,sec_interval):
+        with picamera.PiCamera() as camera:
+            camera.resolution = (1296,972)
+            for filename in camera.capture_continuous( pic_filename + '{counter:03d}.jpg'):
+                logger.info('Autocaptured %s' % filename)
+                if self.stop_event.is_set():
+                    logger.info('Timelapse mode stopped')
+                    break
+                time.sleep(sec_interval)
+
     def close(self):
         self.stop_event.set()
         self.timelaps_thread.join()
+
     def __exit__(self, exc_type, exc_value, traceback):
         self.close()
 
@@ -51,18 +55,16 @@ raspi_pic_counter = 0
 unique_user_set = set([])
 os_name =os.name
 yes_no_keyboard = [['Yes', 'No' ]]
-NORMAL_MODE , SHUTDOWN_MODE, REBOOT_MODE= range(3)
+NORMAL_MODE , SHUTDOWN_MODE, REBOOT_MODE, STOP_MODE = range(4)
 current_mode = NORMAL_MODE
 timelapse_mode = False
+smileys = [ '😆','😋','🙈','😻','😺', '😸', '😍','😅','😊','😃']
 
 if(os_name == "posix"):
     import picamera
     from fractions import Fraction
     from subprocess import call
-    camera = picamera.PiCamera()
-    camera.resolution = (1296,972)
     IamOnRaspi  = True
-    night_mode_on = False
     font = ImageFont.truetype("/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf", 28, encoding="unic")
     #download_folder = '/media/pi/ESD-USB/' # replace this with desired photo download folder
     download_folder = './downloads/' 
@@ -72,9 +74,9 @@ elif(os_name == "nt"):
     download_folder = './downloads/'      # replace this with desired photo download folder
 
 current_folder = download_folder + '{:%Y_%m_%d_%H%M}'.format(datetime.now()) + '/'
-
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 def start(bot, update):
     user = update.message.from_user
     global unique_user_set
@@ -83,11 +85,12 @@ def start(bot, update):
     Message += "/info: Get available commands.\n"
     if IamOnRaspi:
         Message += "/cheese: Capture a photo with the raspi camera.\n"
-        Message += "/nightmode: Toggle nightmode settings on raspi camera.\n"
+        Message += "/longexp: Capture photo with long exposure.\n"
         Message += "/timelapse x: Toggle timelapse mode with x seconds interval.\n" 
         if (admin_telegramID == user.id ):
             Message += "/status: Get status info on raspberry pi.\n"
             Message += "/getip: Get the local network IP address.\n"
+            Message += "/stop: Stop the script.\n"
             Message += "/halt: Shutdown the Pi.\n"
             Message += "/reboot: Reboot the Pi.\n"
     logger.info("Started chat with %s" , user.first_name)
@@ -97,12 +100,13 @@ def info_command(bot, update):
     user = update.message.from_user
     Message = "/info: Get available commands.\n"
     if IamOnRaspi:
-        Message += "/cheese: Capture a photo with the raspi camera.\n"
-        Message += "/nightmode: Toggle nightmode settings on raspi camera.\n"
+        Message += "/cheese: Capture a photo.\n"
+        Message += "/longexp: Capture photo with long exposure.\n"
         Message += "/timelapse x: Toggle timelapse mode with x seconds interval.\n" 
         if (admin_telegramID == user.id ):
             Message += "/status: Get status info on raspberry pi.\n"
             Message += "/getip: Get the local network IP address.\n"
+            Message += "/stop: Stop the script.\n"
             Message += "/halt: Shutdown the Pi.\n"
             Message += "/reboot: Reboot the Pi.\n"
     logger.info("Info requested by %s" , user.first_name)
@@ -186,48 +190,59 @@ def getIP_command(bot, update):
         bot.send_message(chat_id=update.message.chat_id, text="No permission." )
         logger.info("Unauthorized user requested IP adress %s",  user.first_name   )
 
-def nightmode_command(bot, update):
+def longexp_command(bot, update):
     user = update.message.from_user
     if not timelapse_mode:
-        global camera
-        global night_mode_on
-        if not night_mode_on:
-            bot.send_message(chat_id=update.message.chat_id, text="Turning on night mode camera settings." )
-            camera.resolution = (640, 480)
-            camera.drc_strength = "medium"
+        with picamera.PiCamera() as camera:
+            bot.send_message(chat_id=update.message.chat_id, text="Applying long exposure settings..." )
+            camera.resolution = (1280, 720)
+            camera.drc_strength = "low"
             camera.framerate = Fraction(1, 6)
-            camera.shutter_speed = 4500000
+            camera.shutter_speed = 2000000
             camera.exposure_mode = 'off'
             camera.iso = 800
-            time.sleep(2)
-            logger.info("%s turned on night mode for raspi camera.",  user.first_name )
-        else:
-            camera.resolution = (1296,972)
-            camera.drc_strength = 'off'
-            camera.framerate = 30
-            camera.shutter_speed = 0
-            camera.exposure_mode = 'auto'
-            bot.send_message(chat_id=update.message.chat_id, text="Turning off night mode camera settings." )
-            logger.info("%s turned off night mode for raspi camera.",  user.first_name )
-        night_mode_on = not night_mode_on
+            time.sleep(4)
+            global raspi_pic_counter   
+            raspi_pic_counter = raspi_pic_counter + 1
+            global unique_user_set
+            unique_user_set.add(user.id)  
+            pic_filename =  current_folder  + 'picam_' + str(raspi_pic_counter) + '.jpg'
+            bot.send_message(chat_id=update.message.chat_id, text="3..." )
+            time.sleep(1)
+            bot.send_message(chat_id=update.message.chat_id, text="2..." )
+            time.sleep(1)
+            bot.send_message(chat_id=update.message.chat_id, text="1..." )
+            time.sleep(1)
+            msg = 'Cheese... ' +  random.choice(smileys)
+            bot.send_message(chat_id=update.message.chat_id, text=msg )
+            camera.capture( pic_filename )
+            with open(pic_filename, 'rb') as f:
+                bot.send_photo(chat_id=update.message.chat_id, photo=f, timeout=150)
+            logger.info("%s captured long exposure shot..",  user.first_name )
     else:
-        bot.send_message(chat_id=update.message.chat_id, text="Error: First turn off timelapse mode." )
+        bot.send_message(chat_id=update.message.chat_id, text="Error: Turn off timelapse mode." )
         logger.info("%s tried to capture photo in timelapse mode.",  user.first_name )
 
 def cheese_command(bot, update):
     user = update.message.from_user
     if not timelapse_mode:
-        global camera
-        global raspi_pic_counter   
-        raspi_pic_counter = raspi_pic_counter + 1
-        global unique_user_set
-        unique_user_set.add(user.id)  
-        bot.send_message(chat_id=update.message.chat_id, text="I'm taking a picture." )
-        logger.info("%s requested a camera photo.",  user.first_name )
-        pic_filename =  current_folder  + 'picam_' + str(raspi_pic_counter) + '.jpg'
-        camera.capture( pic_filename )
-        with open(pic_filename, 'rb') as f:
-            bot.send_photo(chat_id=update.message.chat_id, photo=f, timeout=150)
+        with picamera.PiCamera() as camera:
+            camera.resolution = (1280, 720)
+            camera.awb_mode='off'
+            camera.drc_strength = "low"
+            camera.awb_gains=(1.4 , 1.5)
+            global raspi_pic_counter   
+            raspi_pic_counter = raspi_pic_counter + 1
+            global unique_user_set
+            unique_user_set.add(user.id)  
+            msg = 'Cheese... ' +  random.choice(smileys)
+            bot.send_message(chat_id=update.message.chat_id, text=msg )
+            pic_filename =  current_folder  + 'picam_' + str(raspi_pic_counter) + '.jpg'
+            time.sleep(1)
+            camera.capture( pic_filename )
+            with open(pic_filename, 'rb') as f:
+                bot.send_photo(chat_id=update.message.chat_id, photo=f, timeout=150)
+            logger.info("%s captured a camera photo.",  user.first_name )
     else:
         bot.send_message(chat_id=update.message.chat_id, text="Error: First turn off timelapse mode." )
         logger.info("%s tried to capture photo in timelapse mode.",  user.first_name )
@@ -238,18 +253,16 @@ def timelapse_command(bot, update, args):
         time_interval = int(input_args)
         if time_interval < 10:
             time_interval =  10
-            logger.info("User input for time_interval to low using 10s instead.")
+            logger.info("User input for time_interval to low using " + str(time_interval) + "s instead.")
     except:
-        time_interval =  60
-        logger.info("Wrong user input for time_interval using 60s instead.")
+        time_interval =  20
+        logger.info("Wrong user input for time_interval using " + str(time_interval) + "s instead.")
     global timelapse_mode
-    global camera
     global my_timelaps
     pic_filename =  current_folder  + 'timelapse_'
     if not timelapse_mode: 
         timelapse_mode = True
-        global camera
-        my_timelaps = timelaps_class(pic_filename,camera ,logger,time_interval)
+        my_timelaps = timelaps_class(pic_filename, logger,time_interval)
         txt = "Turning on timelapse with " + str(time_interval) + "s interval."
         bot.send_message(chat_id=update.message.chat_id, text=txt )
         logger.info(txt)
@@ -322,6 +335,14 @@ def text_handler(bot, update):
             else:
                 current_mode = NORMAL_MODE
                 bot.send_message(chat_id=update.message.chat_id, text= "Ok then not. 👍" )
+        if current_mode == STOP_MODE :
+            if message == "Yes":
+                bot.send_message(chat_id=update.message.chat_id, text= "Stopping script now..." )
+                logger.info("%s approved script stop.", user.first_name )
+                quit()
+            else:
+                current_mode = NORMAL_MODE
+                bot.send_message(chat_id=update.message.chat_id, text= "Ok then not. 👍" )
 
         msg_stripped  = message.lower() 
         msg_stripped = re.sub(r'([^\s\w]|_)+', '', msg_stripped)  # remove all special characters
@@ -345,6 +366,17 @@ def text_handler(bot, update):
                     bot.send_message(chat_id=update.message.chat_id, text= " ".join(only_emojis) )
             except:
                 logger.warning('Emoji update "%s" by "%s" caused error ' , message ,  user.first_name )
+
+def stop_command(bot, update):
+    user = update.message.from_user
+    logger.info("Scipt stop requested by %s",  user.first_name   )
+    if (admin_telegramID == user.id ):
+        markup=ReplyKeyboardMarkup(yes_no_keyboard, one_time_keyboard=True)
+        global current_mode
+        current_mode = STOP_MODE
+        update.message.reply_text("Are you sure?", reply_markup=markup)
+    else:
+        bot.send_message(chat_id=update.message.chat_id, text="No permission." )
 
 def halt_command(bot, update):
     user = update.message.from_user
@@ -375,7 +407,10 @@ def unknown(bot, update):
     logger.info("Unknown command by %s : %s",  user.first_name , command  )
 
 def main():
-    os.makedirs(current_folder)
+    try:
+        os.makedirs(current_folder)
+    except OSError:
+        pass
     updater = Updater(telegram_token)
     dp = updater.dispatcher # Get the dispatcher to register handlers
     dp.add_handler(CommandHandler("start", start))
@@ -385,9 +420,10 @@ def main():
     if IamOnRaspi:
         dp.add_handler(CommandHandler("halt", halt_command))
         dp.add_handler(CommandHandler("reboot", reboot_command))
+        dp.add_handler(CommandHandler("stop", stop_command))
         dp.add_handler(CommandHandler("cheese", cheese_command))
         dp.add_handler(CommandHandler("timelapse", timelapse_command, pass_args=True))
-        dp.add_handler(CommandHandler("nightmode", nightmode_command))
+        dp.add_handler(CommandHandler("longexp", longexp_command))
     dp.add_handler(MessageHandler(Filters.text, text_handler))
     dp.add_handler(MessageHandler(Filters.photo, photo_handler))
     dp.add_handler(MessageHandler(Filters.command, unknown))
